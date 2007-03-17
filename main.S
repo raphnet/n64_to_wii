@@ -25,13 +25,13 @@
 ;		r0: Constant 0
 ;
 ;	------ registers shared between interrupt and non-interrupt context
-;		r1: Select current GC reply buffer
+;		r6: Select current GC reply buffer
 ;		r3: Set to non-zero after each interrupt, used to read from the slave
 ;		controller immediately after each interrupt.
 ;		r4-r5: Nes/Snes controller latest read bytes (r4 filled first)
 ;
 ;	------ registers for non-interrupt context
-;		r2: Contains 0 in snes mode, non-zero in nes mode
+;		r15: Argument
 ;		r16: Temporary register for non-interrupt context
 ;		r17: Loop counter for reading from controller
 ;		r18: Temporary storage while reading from controller
@@ -44,9 +44,9 @@
 
 #include <avr/io.h>
 
-.lcomm gc_rx_buf, 24
+.lcomm gc_rx_buf, 25
 .lcomm gc_tx_buf0, 65	; reply is 64 bit + 1 stop bit
-.lcomm gc_tx_buf1, 64	;
+.lcomm gc_tx_buf1, 65	;
 .lcomm n64_workbuf, 26	; read/write buffer for N64 comm
 .lcomm id_status, 25	; reply to 0000 0000 1 (0x00)
 .lcomm origins_buf, 81	; reply to 0100 0001 1 (0x41)
@@ -54,7 +54,8 @@
 .text
 .global main
 .global SIG_INTERRUPT0
-.global gc_rx_buf
+;.global gc_rx_buf
+.global n64_workbuf
 
 #define IO_SREG	_SFR_IO_ADDR(SREG)
 #define IO_PORTD _SFR_IO_ADDR(PORTD)
@@ -89,7 +90,7 @@ SIG_INTERRUPT0:
 	in r1, IO_SREG
 	ldi	r30, lo8(gc_rx_buf)
 	ldi r31, hi8(gc_rx_buf)
-	ldi r23, 24				; We will receive a 24bit command
+	ldi r23, 25				; We will receive a 24bit command
 
 	rjmp fell
 
@@ -166,9 +167,9 @@ timeout:
 	;  If we had received only 9 bits, the command is possibly getID+status. We
 	;   _must_ respond to this if we want the console to detect us. 
 	;
-	; r23 is a count-down from 24 during the receive phase so it should
-	; contain a value of 15.. 
-	ldi r19, 15
+	; r23 is a count-down from 25 during the receive phase so it should
+	; contain a value of 16.. 
+	ldi r19, 16
 	sub r19, r23 
 	brne interrupt_done
 
@@ -218,7 +219,7 @@ sendOriginsPacket:
 	send it.
 	******************************************/
 sendLatestBuffer:
-	tst r1
+	tst r6
 	brne useBuf1
 
 	; Select the buffer
@@ -229,7 +230,6 @@ useBuf1:
 	ldi	zl, lo8(gc_tx_buf1)
 	ldi zh, hi8(gc_tx_buf1)	
 bufferSelected:
-	adiw zl, 3 ; first 3 bits are always 0
 
 	; Send the packet
 	ldi r23, 65
@@ -336,9 +336,8 @@ main:
 	clr r0
 
 	/* Configure Latch and Clock as outputs and
-	   enable pull-ups on inputs/unused pins, 
-	   data normally high, latch normally low */
-	ldi r16, 0xef	/* 1110 1111 */
+	   enable pull-ups on inputs/unused pins,  */
+	ldi r16, 0xe7	/* 1110 0111 */
 	out IO_PORTC, r16
 	ldi r16, 0x30	/* 0011 0000 */
 	out IO_DDRC, r16
@@ -367,34 +366,13 @@ main:
 	ldi r16, 0x40	/* INT0 set */
 	out IO_GICR, r16
 
-	/* Read jumpers. 
-	  PB0: Common
-	  PB1: JP1
-	  PB2: JP2
-	*/
-	sbi IO_DDRB, 0		; put a '1' on
-	cbi IO_PORTB, 0		; the common pin.
-	cbi IO_DDRB, 1		; setup JP1 and
-	cbi IO_DDRB, 2		; JP2 as inputs
-	sbi IO_PORTB, 1		; Enable JP1 pull-up
-	sbi IO_PORTB, 2		; Enable JP2 pull-up
-	nop
-	nop
-	nop
-	/* At the moment, only JP1 matters. 
-	   JP1 open(high) : Snes
-	   JP1 close(low) : Nes
-	*/
-	ldi r16, 0x02	; mask for PB1 (JP1)
-	in r2, IO_PINB
-	com r2
-	and r2, r16		; isolate the bit.
-	; Now r2 contains 0 in snes mode, 0x02 in nes mode.
 
 	rcall clr_precooked_buffers
 	rcall build_id_packet
 	rcall build_origins_packet
 	rcall initReplyBuf
+
+	clr r6 	; select buffer 0 initially 
 
 	sei
 mainloop:
@@ -407,121 +385,58 @@ mainloop:
 	breq mainloop;
 	
 	clr r3
-	
-	tst r2			; ==0 snes mode, !=0 nes mode
-	breq doSnes
-	
-	rcall readNes
-	rjmp dly
 
-doSnes:
-	rcall readSnes
+	rcall readN64
+	rjmp dly
+	
 dly:
 	rcall delay_16ms	; dont read the controller again too soon?
-						; just in case some non-standard snes compatible
+						; just in case some non-standard compatible
 						; controller does not like this.
 
 	rjmp mainloop
 
-	/*******************************************************
-	 * Subroutine which reads the status of a NES controller
-	 * into the r4 and r5 registers, presenting the bits
-	 * as if it was from a NES controller.
-	 ******************************************************/
-readNes:
-	push r17 ; for r8bits which uses it
 
-
-	/* Latch the buttons output into the shift register */
-	ldi r16, CLK_H_LATCH_H
-	out IO_PORTC, r16
-	rcall delay_6us
-	rcall delay_6us
-	ldi r16, CLK_H_LATCH_L
-	out IO_PORTC, r16	
-	rcall delay_6us
-
-	/* Generate 8 clock pulses, reading data on the falling edge */
-	rcall r8bits ; result is in r18..
-	
-	/* NES sends data in this order:
-	 * A B Select Start Up Down Left Right
-	 * 
-	 * SNES sends data in this order:
-	 * B Y Select Start Up Down Left Right | A X L R 1 1 1 1 
-	 * |--------- R4 ----------------------|------ R5 -----|
+	/*************************************************************
+	 READ N64
 	 */
-	ldi r16, 0x80	; mask for bit 'A'
-	and r16, r18
-	mov r5, r16		; set or clear snes bit A
-
-	mov r16, r18
-	andi r16, 0x40	; isolate bit 'B'
-	lsl r16			; move bit 'B' for first place, for SNES
-	andi r18, 0x3f	; clear snes B and Y 
-	or r18, r16		; set/clear snes bit 'B'
-	mov r4, r18
-
-	pop r17
-	ret
-
-	/*******************************************************
-	 * Subroutine which reads the status of an SNES controller
-	 * into the r4 and r5 registers.
-	 *******************************************************/
-readSnes:
-	push r17 ; for r8bits which uses it
-
-	/* Latch the buttons output into the shift register */
-	ldi r16, CLK_H_LATCH_H
-	out IO_PORTC, r16
-	rcall delay_6us
-	rcall delay_6us
-	ldi r16, CLK_H_LATCH_L
-	out IO_PORTC, r16	
-	rcall delay_6us
+readN64:
 	
-	/* Generate 8 clock pulses, reading data on the falling edge */
-	rcall r8bits
-	mov r4, r18
-	rcall r8bits
-	mov r5, r18
-
-	pop r17
-	ret
-
-	/*****************************************************
-	 * Subroutine which reads 8 bits from the controller
-	 * Uses r17, r16
-	 * Returns result in r18
-	 *****************************************************/
-r8bits:
-	ldi r17, 8
-	clr r18
-r8bits_lp:
-	lsl r18
-
-	ldi r16, CLK_L_LATCH_L
-	out IO_PORTC, r16
-
-	in r16, IO_PINC
-	com r16			; snes active low, make bit active high
-	andi r16, 0x08	; mask the data bit
-	lsr r16
-	lsr r16
-	lsr r16
-	or r18, r16
-
-	rcall delay_6us
-
-	ldi r16, CLK_H_LATCH_L
-	out IO_PORTC, r16
-
-	rcall delay_6us
-
-	dec r17
-	brne r8bits_lp
+	/* Get button/axes report command is 0x0000 0001 */
+	ldi yl, lo8(n64_workbuf)
+	ldi yh, hi8(n64_workbuf)
+	ldi r16, 0x01
+	st y+, r0
+	st y+, r0
+	st y+, r0
+	st y+, r0
 	
+	st y+, r0
+	st y+, r0
+	st y+, r0
+	st y+, r16
+	st y+, r16 ; stop bit
+	
+	ldi yl, lo8(n64_workbuf)
+	ldi yh, hi8(n64_workbuf)
+
+	ldi r16, 9 ; byte + stop bit
+	mov r15, r16
+	rcall n64_sendData
+	tst r15
+;	brne sorry
+
+	; We have the buttons!
+	ldi yl, lo8(n64_workbuf)
+	ldi yh, hi8(n64_workbuf)
+	ld r16, y
+	
+	ldi yl, lo8(gc_tx_buf0)
+	ldi yh, hi8(gc_tx_buf0)
+	adiw yl, 7
+	st y, r16
+	
+sorry:
 	ret
 
 	/*************************************************************

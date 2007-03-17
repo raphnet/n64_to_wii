@@ -26,6 +26,7 @@ fuse:
 
 flash: n64_to_wii.hex
 	$(UISP) --erase --upload --verify if=n64_to_wii.hex
+	#$(UISP) --erase --upload --verify if=n64_to_wii.hex
 
 %.o: %.S
 	$(CC) $(CFLAGS) -c $<
