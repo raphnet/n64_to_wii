@@ -7,7 +7,7 @@ UISP=uisp -dprog=stk500 -dpart=atmega8 -dserial=/dev/avr
 CFLAGS=-Wall -mmcu=$(CPU)
 LDFLAGS=-mmcu=$(CPU) -Wl,-Map=n64_to_wii.map
 
-OBJS=main.o
+OBJS=main.o n64.o
 
 all: n64_to_wii.hex
 
