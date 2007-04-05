@@ -31,7 +31,7 @@
 ;		r4-r5: Nes/Snes controller latest read bytes (r4 filled first)
 ;
 ;	------ registers for non-interrupt context
-;		r15: Argument
+;		r15: Argument or temporary
 ;		r16: Temporary register for non-interrupt context
 ;		r17: Loop counter for reading from controller
 ;		r18: Temporary storage while reading from controller
@@ -81,6 +81,8 @@
 #define DATA_RAISE_TIMEOUT	0x15 
 
 ; Useful
+#define xl	r26
+#define xh	r27
 #define yl	r28
 #define yh	r29
 #define zl	r30
@@ -88,8 +90,8 @@
 
 SIG_INTERRUPT0:
 	in r1, IO_SREG
-	ldi	r30, lo8(gc_rx_buf)
-	ldi r31, hi8(gc_rx_buf)
+	ldi	zl, lo8(gc_rx_buf)
+	ldi zh, hi8(gc_rx_buf)
 	ldi r23, 25				; We will receive a 24bit command
 
 	rjmp fell
@@ -154,8 +156,8 @@ waitHigh:
 	; I found says that there is a 6ms second delay before a real gamecube
 	; controller responds. That leaves us a lot of time :)
 gotCommand:
-	ldi	r30, lo8(gc_rx_buf)
-	ldi r31, hi8(gc_rx_buf)
+	ldi	zl, lo8(gc_rx_buf)
+	ldi zh, hi8(gc_rx_buf)
 
 	; note: Last byte not checked... it contains a bit for rumble motor.. I'm 
 	; not sure about the others. I'd rather reply anyway than not doing it and
@@ -426,7 +428,60 @@ readN64:
 	tst r15
 ;	brne sorry
 
-	; We have the buttons!
+	; We have the data! Translate it for the gamecube
+	;
+	; X will be at the beginning of the N64 buffer and will increment
+	; one byte at the time. Y will always point to the gamecube transmission
+	; buffer and the std instruction will be used.
+
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+	ldi yl, lo8(gc_tx_buf0)
+	ldi yh, hi8(gc_tx_buf0)
+
+	; Button remapping
+	ld r16, x+		; N64 A
+	std y+7, r16	; GC A
+	ld r16, x+		; N64 B
+	std y+6, r16	; GC B
+	ld r16, x+		; N64 Z
+	std y+11, r16	; GC Z
+	ld r16, x+		; N64 Start
+	std y+3, r16	; GC Start
+	ld r16, x+		; 	N64 Up
+	std y+12, r16	;	GC Up
+	ld r16, x+		;	N64 Down
+	std y+13, r16	;	GC Down
+	ld r16, x+		;	N64 Left
+	std y+15, r16	;	GC Left
+	ld r16, x+		;	N64 Right
+	std y+14, r16	;	GC Right
+	adiw xl, 2		;	-- Skip the 2 N64 null bits --
+	ld r16, x+		;	N64 L
+	std y+9, r16	;	GC L
+	ld r16, x+		;	N64 R
+	std y+10, r16	;	GC R
+
+	; Ok, now the fun starts. Simulate analogic L/R buttons. Start with the 'L' button:
+	ldd r16, y+9
+	clr r15	; Set L to 0x00
+	tst r16
+	breq do_L
+	com r15	; Set L to 0xff
+do_L:
+	ldi r17, 8
+	adiw yl, 48		; Point Y to Left button value in GC buffer
+lp_L:
+	st y+, r15
+	dec r17
+	brne lp_L
+
+	; Now do the 'R' button
+	ldi yl, lo8(gc_tx_buf0)
+	ldi yh, hi8(gc_tx_buf0)
+
+
+#if 0
 	ldi yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
 	ld r16, y
@@ -435,7 +490,8 @@ readN64:
 	ldi yh, hi8(gc_tx_buf0)
 	adiw yl, 7
 	st y, r16
-	
+#endif
+
 sorry:
 	ret
 
