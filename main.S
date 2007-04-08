@@ -425,9 +425,31 @@ readN64:
 	ldi r16, 9 ; byte + stop bit
 	mov r15, r16
 	rcall n64_sendData
+	; n64_sendData returns non-zero in r15 if an error occurs.
 	tst r15
-;	brne sorry
+	breq translate
 
+	ret
+
+loadTxBufY:
+	; When r6 is non-zero, interrupt context
+	; reads from buf1. This means that we should
+	; write to buf0.
+	tst r6
+	brne useBuf0
+
+	ldi yl, lo8(gc_tx_buf1)
+	ldi yh, hi8(gc_tx_buf1)
+
+	ret
+
+useBuf0:
+	ldi yl, lo8(gc_tx_buf0)
+	ldi yh, hi8(gc_tx_buf0)
+
+	ret
+
+translate:
 	; We have the data! Translate it for the gamecube
 	;
 	; X will be at the beginning of the N64 buffer and will increment
@@ -436,8 +458,7 @@ readN64:
 
 	ldi xl, lo8(n64_workbuf)
 	ldi xh, hi8(n64_workbuf)
-	ldi yl, lo8(gc_tx_buf0)
-	ldi yh, hi8(gc_tx_buf0)
+	rcall loadTxBufY
 
 	; Button remapping
 	ld r16, x+		; N64 A
@@ -477,22 +498,141 @@ lp_L:
 	brne lp_L
 
 	; Now do the 'R' button
-	ldi yl, lo8(gc_tx_buf0)
-	ldi yh, hi8(gc_tx_buf0)
+	rcall loadTxBufY
+
+	ldd r16, y+10	; R btn
+	clr r15	; Set L to 0x00
+	tst r16
+	breq do_R
+	com r15	; Set L to 0xff
+do_R:
+	ldi r17, 8
+	adiw yl, 56		; Point Y to Right button value in GC buffer
+lp_R:
+	st y+, r15
+	dec r17
+	brne lp_R
+
+	; Now do the C-Stick Y axis using the N64 C pad
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+	rcall loadTxBufY
+
+	adiw xl, 12		; up
+	ld r16, x+
+	tst r16
+	brne C_up
+	ld r16, x+		; down
+	tst r16
+	brne C_dn
+	ldi r16, 0x7f	; middle position
+	rjmp do_Cupdn	; up or down not pressed
+C_up:
+	ldi r16, 0x00	; up position
+	rjmp do_Cupdn
+C_dn:
+	ldi r16, 0xff	; down position
+do_Cupdn:
+	ldi r17, 0x80
+	adiw yl, 40		; point to GC C-Stick Y value byte
+lp_Cupdn:
+	mov r15, r17
+	and r15, r16
+	st y+, r15		; store r17 or 0
+	lsr r17
+	brne lp_Cupdn
+
+	; Now do the C-Stick X axis using the N64 C pad
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+	rcall loadTxBufY
+	adiw xl, 14		; left
+	ld r16, x+
+	tst r16
+	brne C_lf
+	ld r16, x+		; right
+	tst r16
+	brne C_rt
+	ldi r16, 0x7f	; middle position
+	rjmp do_Clfrt	; up or down not pressed
+C_lf:
+	ldi r16, 0x00	; up position
+	rjmp do_Clfrt
+C_rt:
+	ldi r16, 0xff	; down position
+do_Clfrt:
+	ldi r17, 0x80
+	adiw yl, 32		; point to GC C-Stick X value byte
+lp_Clfrt:
+	mov r15, r17
+	and r15, r16
+	st y+, r15		; store r17 or 0
+	lsr r17
+	brne lp_Clfrt
+
+	; Now copy the first joystick byte
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+	adiw xl, 16
+	ldi r17, 0x80
+	clr r18
+rd_axis1:
+	ld r16, x+
+	tst r16
+	breq rdwas0 ; zero? no need to set the bit
+	or r18, r17
+rdwas0:
+	lsr r17
+	brne rd_axis1
+	; now the first value is in r18. Fix it up and write
+	; it in the destination buffer
+	ldi r17, 0x7f
+	add r18, r17
+	rcall loadTxBufY
+	adiw yl, 16
+	ldi r17, 0x80
+wr_axis1:
+	mov r15, r17
+	and r15, r18
+	st y+, r15
+	lsr r17
+	brne wr_axis1
+
+	; Now copy the second joystick byte
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+	adiw xl, 24
+	ldi r17, 0x80
+	clr r18
+rd_axis2:
+	ld r16, x+
+	tst r16
+	breq rdwas02 ; zero? no need to set the bit
+	or r18, r17
+rdwas02:
+	lsr r17
+	brne rd_axis2
+	; now the first value is in r18. Fix it up and write
+	; it in the destination buffer
+	ldi r17, 0x7f
+	add r18, r17
+	rcall loadTxBufY
+	adiw yl, 24
+	ldi r17, 0x80
+wr_axis2:
+	mov r15, r17
+	and r15, r18
+	st y+, r15
+	lsr r17
+	brne wr_axis2
 
 
-#if 0
-	ldi yl, lo8(n64_workbuf)
-	ldi yh, hi8(n64_workbuf)
-	ld r16, y
-	
-	ldi yl, lo8(gc_tx_buf0)
-	ldi yh, hi8(gc_tx_buf0)
-	adiw yl, 7
-	st y, r16
-#endif
 
-sorry:
+
+
+
+
+	com r6 ; swap current buffer
 	ret
 
 	/*************************************************************
@@ -641,6 +781,8 @@ lp34128:
 
 	/**************************************************/
 initReplyBuf:
+	ldi	xl, lo8(gc_tx_buf1)
+	ldi xh, hi8(gc_tx_buf1)
 	ldi	zl, lo8(gc_tx_buf0)
 	ldi zh, hi8(gc_tx_buf0)
 	ldi yl, lo8(origins_buf)
@@ -651,12 +793,14 @@ initReplyBuf:
 cp_lp:
 	ld r20, y+
 	st z+, r20
+	st x+, r20
 	dec r16
 	brne cp_lp
 
 	; And add the final 1 (stop bit)
 	ldi r20, 1
 	st z+, r20
+	st x+, r20
 
 	ret
 

@@ -109,7 +109,7 @@ lp_send1_3us:
 
 	ldi	yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
-	ldi r18, 16
+	ldi r18, 33	; 32 bit reply + stop
 
 readNextBit:
 	ldi r16, DATA_FALL_TIMEOUT	; setup a timeout
