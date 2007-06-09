@@ -175,14 +175,49 @@ timeout:
 	sub r19, r23 
 	brne interrupt_done
 
+	; point z to the first bit (one byte per bit) of the
+	; message we just received. 
 	ldi zl, lo8(gc_rx_buf)
 	ldi zh, hi8(gc_rx_buf)
 
 	; Commands: 0x00 = Get ID + Status, 0x40 = Get origins? 
-	adiw zl, 1
+;
+	; Check that bits 7,5-0 are low. Then, if bit 6 is high,
+	; command is 0x40. Else, it is 0x00.
+	;
+	ld r19, z+	;	bit 7
+	tst r19
+	brne unknown_cmd
+	ld r19, z+	;	bit 6 (ignored for now)
+	ld r19, z+	;	bit 5
+	tst r19
+	brne unknown_cmd
+	ld r19, z+	;	bit 4
+	tst r19
+	brne unknown_cmd
+	ld r19, z+	;	bit 3
+	tst r19
+	brne unknown_cmd
+	ld r19, z+	;	bit 2
+	tst r19
+	brne unknown_cmd
+	ld r19, z+	;	bit 1
+	tst r19
+	brne unknown_cmd
+	ld r19, z+	;	bit 0
+	tst r19
+	brne unknown_cmd
+
+	; now check bit 6
+	ldi zl, lo8(gc_rx_buf)	; point z to
+	ldi zh, hi8(gc_rx_buf)	; 			bit 7
+	adiw zl, 1				;	advance to bit 6
 	ld r19, z
 	tst r19
-	breq not_40
+	breq not_40		;	 if it's clear, then we got the 0x00 command.
+	
+	; Bit was sent? It's 0x40!
+	
 	rjmp sendOriginsPacket
 not_40: ; probably 0x00
 	rjmp sendIdPacket
