@@ -47,7 +47,7 @@
 .lcomm gc_rx_buf, 25
 .lcomm gc_tx_buf0, 65	; reply is 64 bit + 1 stop bit
 .lcomm gc_tx_buf1, 65	;
-.lcomm n64_workbuf, 26	; read/write buffer for N64 comm
+.lcomm n64_workbuf, 34	; read/write buffer for N64 comm
 .lcomm id_status, 25	; reply to 0000 0000 1 (0x00)
 .lcomm origins_buf, 81	; reply to 0100 0001 1 (0x41)
 
@@ -166,7 +166,7 @@ gotCommand:
 	rjmp sendLatestBuffer
 
 timeout:
-	;  If we had received only 9 bits, the command is possibly getID+status. We
+	;  If we have received only 9 bits, the command is possibly getID+status. We
 	;   _must_ respond to this if we want the console to detect us. 
 	;
 	; r23 is a count-down from 25 during the receive phase so it should
@@ -180,10 +180,10 @@ timeout:
 	ldi zl, lo8(gc_rx_buf)
 	ldi zh, hi8(gc_rx_buf)
 
-	; Commands: 0x00 = Get ID + Status, 0x40 = Get origins? 
+	; Commands: 0x00 = Get ID + Status, 0x41 = Get origins? 
 ;
 	; Check that bits 7,5-0 are low. Then, if bit 6 is high,
-	; command is 0x40. Else, it is 0x00.
+	; command is 0x41. Else, it is 0x00.
 	;
 	ld r19, z+	;	bit 7
 	tst r19
@@ -204,22 +204,28 @@ timeout:
 	ld r19, z+	;	bit 1
 	tst r19
 	brne unknown_cmd
+	
 	ld r19, z+	;	bit 0
 	tst r19
-	brne unknown_cmd
+	clc
+	breq checkBit6
+	sec
 
+checkBit6:
 	; now check bit 6
 	ldi zl, lo8(gc_rx_buf)	; point z to
 	ldi zh, hi8(gc_rx_buf)	; 			bit 7
-	adiw zl, 1				;	advance to bit 6
+	ld r19, z+				;	advance to bit 6
 	ld r19, z
 	tst r19
-	breq not_40		;	 if it's clear, then we got the 0x00 command.
-	
-	; Bit was sent? It's 0x40!
-	
+	breq not_41		;	 if it's clear, then we got the 0x00 command.
+	; ok, so it is 0x40 or 0x41.
+	brcc unknown_cmd
+	; Bit was set? It's 0x40!
 	rjmp sendOriginsPacket
-not_40: ; probably 0x00
+
+not_41: ; we jumped here beacuse bit 6 is 0. Bit 0 must be low too.
+	brcs unknown_cmd	; 0x01 is not a command we know about. 
 	rjmp sendIdPacket
 
 unknown_cmd:
@@ -501,7 +507,8 @@ translate:
 	ld r16, x+		; N64 B
 	std y+6, r16	; GC B
 	ld r16, x+		; N64 Z
-	std y+11, r16	; GC Z
+;	std y+11, r16	; GC Z
+	std y+9, r16	; GC L		
 	ld r16, x+		; N64 Start
 	std y+3, r16	; GC Start
 	ld r16, x+		; 	N64 Up
@@ -514,7 +521,8 @@ translate:
 	std y+14, r16	;	GC Right
 	adiw xl, 2		;	-- Skip the 2 N64 null bits --
 	ld r16, x+		;	N64 L
-	std y+9, r16	;	GC L
+;	std y+9, r16	;	GC L
+	std y+11, r16	;	GC L
 	ld r16, x+		;	N64 R
 	std y+10, r16	;	GC R
 
@@ -563,10 +571,10 @@ lp_R:
 	ldi r16, 0x7f	; middle position
 	rjmp do_Cupdn	; up or down not pressed
 C_up:
-	ldi r16, 0x00	; up position
+	ldi r16, 0xff	; up position
 	rjmp do_Cupdn
 C_dn:
-	ldi r16, 0xff	; down position
+	ldi r16, 0x00	; down position
 do_Cupdn:
 	ldi r17, 0x80
 	adiw yl, 40		; point to GC C-Stick Y value byte
