@@ -169,6 +169,10 @@ waitHigh:
 gotCommand:
 	; return with 0 in r15 on success
 	clr r15
+#ifdef SAVEREGS
+	pop r17
+	pop r16
+#endif
 	ret
 
 align_delay:
@@ -176,12 +180,20 @@ align_delay:
 lp634535:
 	dec r16
 	brne lp634535
+#ifdef SAVEREGS
+	pop r17
+	pop r16
+#endif
 	ret
 
 timeout:
 	; return with 1 in r15 if error
 	clr r15
 	inc r15
+#ifdef SAVEREGS
+	pop r17
+	pop r16
+#endif
 	ret
 
 
