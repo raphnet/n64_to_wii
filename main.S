@@ -230,6 +230,10 @@ not_41: ; we jumped here beacuse bit 6 is 0. Bit 0 must be low too.
 
 unknown_cmd:
 interrupt_done:
+	out IO_SREG, r1
+	reti
+
+interrupt_done_poll:
 	inc r3				; when r3 is non-zero, mainloop reads one time from the
 						; slave controller and clears this register.
 	out IO_SREG, r1
@@ -277,7 +281,7 @@ bufferSelected:
 	; Send the packet
 	ldi r23, 65
 	rcall sendGCData
-	rjmp interrupt_done
+	rjmp interrupt_done_poll
 
 
 	/************************************************
@@ -416,27 +420,29 @@ main:
 	rcall initReplyBuf
 
 	clr r6 	; select buffer 0 initially 
+	clr r3
 
 	sei
 mainloop:
-	/* A real Snes polls the controller at 60hz. But we
-	poll the controller after each interrupt (our only
-	interrupt source is when the gamecube sends us a
-	command. */
-
 	tst r3				; set inside int handler
 	breq mainloop;
-	
-	clr r3
 
 	rcall readN64
 	rjmp dly
 	
 dly:
+
+	; Note: SLOW_POLLING is not defined. The Wii polls two times at 1ms intervals,
+	; followed by an approx. delay of 16ms before the next two reads. Why? Debouncing maybe?
+	; In our case, this permits a more up-to-date button state on the second read because
+	; we will report freshly read N64 controller data on the second read. (that is, if SLOW_POLLING
+	; is not defined.... Too bad for non-standard controllers if it cause a problem.
+#ifdef SLOW_POLLING 
 	rcall delay_16ms	; dont read the controller again too soon?
 						; just in case some non-standard compatible
 						; controller does not like this.
-
+#endif
+	clr r3
 	rjmp mainloop
 
 
