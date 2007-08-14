@@ -18,8 +18,6 @@
 #define yl	r28
 #define yh	r29
 
-/* #define SAVEREGS */
-
 	/************************************************
 	* Send data using the N64/GC serial protocol which
 	* is as follows:
@@ -43,10 +41,6 @@
 	* Used registers: r16, r17
 	************************************************/
 n64_sendData:
-#ifdef SAVEREGS
-	push r16
-	push r17
-#endif
 
 lp_sendGCData_bits:
 	ld r16, y+
@@ -71,11 +65,9 @@ lp_send0_1us:
 
 	dec r15
 	brne lp_sendGCData_bits
-#ifdef SAVEREGS
-	pop r17
-	pop r16
-#endif
-	ret
+
+	rjmp readResponse
+;	ret
 
 send1:
 	sbi N64_IO_DDR, N64_DATA_BIT	; Pull bus to 0
@@ -98,14 +90,11 @@ lp_send1_3us:
 
 	dec r15
 	brne lp_sendGCData_bits
-#ifdef SAVEREGS
-	pop r17
-	pop r16
-#endif
 	
-	; ret ; If commented, fallthrough to read response
+	; rjmp readResponse fallthrough to read response
 
 	/********************************************************/
+readResponse:
 
 	ldi	yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
@@ -169,10 +158,6 @@ waitHigh:
 gotCommand:
 	; return with 0 in r15 on success
 	clr r15
-#ifdef SAVEREGS
-	pop r17
-	pop r16
-#endif
 	ret
 
 align_delay:
@@ -180,20 +165,12 @@ align_delay:
 lp634535:
 	dec r16
 	brne lp634535
-#ifdef SAVEREGS
-	pop r17
-	pop r16
-#endif
 	ret
 
 timeout:
 	; return with 1 in r15 if error
 	clr r15
 	inc r15
-#ifdef SAVEREGS
-	pop r17
-	pop r16
-#endif
 	ret
 
 
