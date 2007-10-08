@@ -29,7 +29,7 @@
 ;		r3: Set to non-zero after each interrupt, used to read from the slave
 ;		controller immediately after each interrupt.
 ;		r4-r5: Nes/Snes controller latest read bytes (r4 filled first)
-;		r7:  Mapping tweaks register bitfield.
+;		r7: Mapping tweaks register bitfield.
 ;				0: If set, unswap L and Z buttons
 ;               1: Sin and punishment mapping {
 ;						N64 C-Stick Left -> Gamecube Y
@@ -50,17 +50,20 @@
 ;		r19: Temporary register for interrupt context
 ;		r20: Temporary register for interrupt context
 ;		r23: Bit Counter for interrupt context
+;		r8: Variable. When non-zero, reply with 80 bits instead of 64.
 
 #include <avr/io.h>
 #include "gc_offsets.h"
 #include "n64_offsets.h"
 
 .lcomm gc_rx_buf, 25
-.lcomm gc_tx_buf0, 65	; reply is 64 bit + 1 stop bit
-.lcomm gc_tx_buf1, 65	;
+.lcomm gc_tx_buf0, 64	; reply is 64 bit + 1 stop bit
+.lcomm gc_tx_buf0_extra, 16	; for 80bit responses
+.lcomm gc_tx_buf1, 64	;
+.lcomm gc_tx_buf1_extra, 16 ; for 80bit response
 .lcomm n64_workbuf, 34	; read/write buffer for N64 comm
-.lcomm id_status, 25	; reply to 0000 0000 1 (0x00)
-.lcomm origins_buf, 81	; reply to 0100 0001 1 (0x41)
+.lcomm id_status, 24	; reply to 0000 0000 1 (0x00)
+.lcomm origins_buf, 80	; reply to 0100 0001 1 (0x41)
 
 .text
 .global main
@@ -174,6 +177,14 @@ gotCommand:
 	; not sure about the others. I'd rather reply anyway than not doing it and
 	; having the console beleiving the controller is gone or failing... 
 
+	; Here are some possible 24 bit commands and the reply length assotiated with them.
+	; 64 bit replies: 0x400300, 0x400302  ...
+	; 80 bit replies: 0x420000, 0x420302
+
+	; test only bit 6 (0x020000) since it is apparently when this 
+	; very bit is set that a controller replies with 80 bits 
+	ldd r8, Z+6
+
 	rjmp sendLatestBuffer
 
 timeout:
@@ -260,14 +271,14 @@ lp634534:
 sendIdPacket:
 	ldi	zl, lo8(id_status)
 	ldi zh, hi8(id_status)
-	ldi r23, 25
+	ldi r23, 24
 	rcall sendGCData
 	rjmp interrupt_done
 
 sendOriginsPacket:
 	ldi	zl, lo8(origins_buf)
 	ldi zh, hi8(origins_buf)
-	ldi r23, 81
+	ldi r23, 80
 	rcall sendGCData
 	rjmp interrupt_done
 
@@ -289,8 +300,16 @@ useBuf1:
 	ldi zh, hi8(gc_tx_buf1)	
 bufferSelected:
 
+	; When r8 != 0, send a 80 bit reply 
+	tst r8
+	breq send64Bits
+	ldi r23, 80
+	rjmp dosendGCData
+
+send64Bits:
 	; Send the packet
-	ldi r23, 65
+	ldi r23, 64
+dosendGCData:
 	rcall sendGCData
 	rjmp interrupt_done_poll
 
@@ -315,6 +334,9 @@ bufferSelected:
 	* Z must point to first byte of data. Every byte
 	* represents one bit (programming laziness..). A logic
 	* 1 is sent when a byte is non-zero.
+	*
+	* A stop bit is added at thy end of the packet.
+	*
 	* Used registers: r19, r20
 	************************************************/
 sendGCData:
@@ -343,6 +365,21 @@ lp_send0_1us:
 	dec r23
 	brne lp_sendGCData_bits
 
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	; STOP BIT
+	sbi IO_DDRD, GC_DATA_BIT ; Pull low for stop bit
+	ldi r20, 4
+stbdly0:
+	dec r20
+	brne stbdly0
+	nop
+	cbi IO_DDRD, GC_DATA_BIT ;	Release
+
 	ret
 
 send1:
@@ -367,6 +404,22 @@ lp_send1_3us:
 	dec r23
 	brne lp_sendGCData_bits
 
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+
+	; STOP BIT
+	sbi IO_DDRD, GC_DATA_BIT ; Pull low for stop bit
+	ldi r20,4
+stbdly1:
+	dec r20
+	brne stbdly1
+	nop
+	cbi IO_DDRD, GC_DATA_BIT	; Release
+	
 	ret
 
 	 /*
@@ -914,9 +967,10 @@ build_id_packet:
 	st z, r19	; Dolphin
 	adiw zl, 11
 	st z, r19	; Mysterious status bit
+#if 0
 	adiw zl, 6
 	st z, r19	; Stop bit
-
+#endif
 	ret
 
 build_origins_packet:
@@ -964,9 +1018,10 @@ build_origins_packet:
 	st z+, r19
 	st z, r19
 	;;;; 16 bit of 0's? 
+#if 0
 	adiw zl, 17
 	st z, r19 	; Stop bit
-
+#endif
 	ret
 
 	/*********************************************
@@ -977,7 +1032,7 @@ clr_precooked_buffers:
 	ldi	zl, lo8(id_status)
 	ldi zh, hi8(id_status)
 	
-	ldi r19, 25
+	ldi r19, 24
 lp3412:
 	st z+, r20
 	dec r19
@@ -985,7 +1040,7 @@ lp3412:
 
 	ldi	zl, lo8(origins_buf)
 	ldi zh, hi8(origins_buf)
-	ldi r19, 81
+	ldi r19, 80
 lp34128:
 	st z+, r20
 	dec r19
@@ -1010,11 +1065,11 @@ cp_lp:
 	st x+, r20
 	dec r16
 	brne cp_lp
-
+#if 0
 	; And add the final 1 (stop bit)
 	ldi r20, 1
 	st z+, r20
 	st x+, r20
-
+#endif
 	ret
 
