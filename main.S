@@ -29,12 +29,21 @@
 ;		r3: Set to non-zero after each interrupt, used to read from the slave
 ;		controller immediately after each interrupt.
 ;		r4-r5: Nes/Snes controller latest read bytes (r4 filled first)
+;		r7:  Mapping tweaks register bitfield.
+;				0: If set, unswap L and Z buttons
+;               1: Sin and punishment mapping {
+;						N64 C-Stick Left -> Gamecube Y
+;						N64 C-Stick Right -> Gamecube X
+;				}
+;				2: Disable N64 joystick value scaling
+;				3: If set, scale by 1.5 instead of 1.375 (if scaling is not disabled)
 ;
 ;	------ registers for non-interrupt context
 ;		r15: Argument or temporary
 ;		r16: Temporary register for non-interrupt context
 ;		r17: Loop counter for reading from controller
 ;		r18: Temporary storage while reading from controller
+;		r21: Error flag for N64 data reception
 ;
 ;	------ Interrupt context registers (some are used before enabling interrupts though)
 ;		r1: SREG backup in interrupt. Faster than pushing it to stack.
@@ -43,6 +52,8 @@
 ;		r23: Bit Counter for interrupt context
 
 #include <avr/io.h>
+#include "gc_offsets.h"
+#include "n64_offsets.h"
 
 .lcomm gc_rx_buf, 25
 .lcomm gc_tx_buf0, 65	; reply is 64 bit + 1 stop bit
@@ -358,22 +369,7 @@ lp_send1_3us:
 
 	ret
 
-	/*  -- PORTC --
-	 * 7: NC
-	 * 6: NC
-	 * 5: SNES Clock out
-	 * 4: SNES Latch out
-
-	 * 3: Snes Data in
-	 * 2: NC
-	 * 1: NC
-	 * 0: NC
-	 *
-	 * -- PORTB --
-	 * 0: Jumpers common
-	 * 1: JP0 
-	 * 2: JP1
-	 *
+	 /*
 	 * -- PORTD --
 	 * 2: Int0 (GC Data In (simulated open collector by toggling direction))
 	 * 1: NC or Shorted with 0
@@ -419,8 +415,57 @@ main:
 	rcall build_origins_packet
 	rcall initReplyBuf
 
+	;inc r7 ; test
+
 	clr r6 	; select buffer 0 initially 
 	clr r3
+
+	; before enabling interrupt, read from the controller. Depending
+	; on which buttons are down, enable some mapping tweaks.
+	;
+	; readN64 sets r15 to 0 on success.
+retryRead:
+	rcall delay_16ms
+	rcall readN64
+	tst r21
+	brne retryRead
+
+	clr r7	; disable all mapping tweaks
+	ldi yl, lo8(n64_workbuf)
+	ldi yh, hi8(n64_workbuf)
+
+	;;;; L pressed at startup. Dont swap Z and L buttons.
+	ldd r16, y+N64_OFF_L
+	tst r16
+	breq no_unswap
+	ldi r16, 0x01	; bit0: unswap
+	or r7, r16
+no_unswap:
+
+	;;;; R pressed at startup. Sin and punishment mapping.
+	ldd r16, y+N64_OFF_R
+	tst r16
+	breq no_sinp
+	ldi r16, 0x02	; bit1: sin and punishment mapping
+	or r7, r16
+no_sinp:
+
+	;;;; D pad Left pressed at startup. Disable value scaling.
+	ldd r16, y+N64_OFF_D_LEFT
+	tst r16
+	breq no_disable_scaling
+	ldi r16, 0x04	; bit2: Disable N64 joystick value scaling
+	or r7, r16
+no_disable_scaling:
+
+	;;;; D pad Right pressed at startup. Scale N64 values by 1.5 instead of 1.375
+	ldd r16, y+N64_OFF_D_RIGHT
+	tst r16
+	breq no_1dot5_scaling
+	ldi r16, 0x08	; bit3: Scale N64 values by 1.5 if set.
+	or r7, r16
+no_1dot5_scaling:
+
 
 	sei
 mainloop:
@@ -506,57 +551,90 @@ translate:
 	ldi xl, lo8(n64_workbuf)
 	ldi xh, hi8(n64_workbuf)
 	rcall loadTxBufY
+#define GCMAP(n)	std y+ GC_OFF_##n , r16
 
 	; Button remapping
 	ld r16, x+		; N64 A
-	std y+7, r16	; GC A
+	GCMAP(A)
+	
 	ld r16, x+		; N64 B
-	std y+6, r16	; GC B
+	GCMAP(B)
+	
 	ld r16, x+		; N64 Z
-;	std y+11, r16	; GC Z
-	std y+9, r16	; GC L		
+	sbrs r7, 0
+	GCMAP(L)
+	sbrc r7, 0
+	GCMAP(Z)	; unswap Z/L
+	
 	ld r16, x+		; N64 Start
-	std y+3, r16	; GC Start
+	GCMAP(START)
+	
 	ld r16, x+		; 	N64 Up
-	std y+12, r16	;	GC Up
+	GCMAP(D_UP)
+	
 	ld r16, x+		;	N64 Down
-	std y+13, r16	;	GC Down
+	GCMAP(D_DOWN)
+	
 	ld r16, x+		;	N64 Left
-	std y+15, r16	;	GC Left
+	GCMAP(D_LEFT)
+	
 	ld r16, x+		;	N64 Right
-	std y+14, r16	;	GC Right
+	GCMAP(D_RIGHT)
+	
 	adiw xl, 2		;	-- Skip the 2 N64 null bits --
+	
 	ld r16, x+		;	N64 L
-;	std y+9, r16	;	GC L
-	std y+11, r16	;	GC L
+	sbrs r7, 0
+	GCMAP(Z)
+	sbrc r7, 0
+	GCMAP(L)	; unswap Z/L
+	
 	ld r16, x+		;	N64 R
-	std y+10, r16	;	GC R
+	GCMAP(R)
 
-	; Ok, now the fun starts. Simulate analogic L/R buttons. Start with the 'L' button:
-	ldd r16, y+9
+;;;;;;;; Sin and punishment mapping
+	sbrs r7, 1
+	rjmp no_c_lf_rt_to_gc_xy
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+
+	adiw xl, N64_OFF_C_LEFT
+	ld r16, x
+	GCMAP(Y)
+	sbiw xl, N64_OFF_C_LEFT
+
+	adiw xl, N64_OFF_C_RIGHT
+	ld r16, x
+	GCMAP(X)
+no_c_lf_rt_to_gc_xy:
+
+	;;;;;;;;;;;;;; Simulate analogic L/R buttons according to the corresponding buttons;
+	;;;;;; Start with the 'L' button:
+	ldd r16, y+GC_OFF_L
 	clr r15	; Set L to 0x00
 	tst r16
 	breq do_L
 	com r15	; Set L to 0xff
 do_L:
 	ldi r17, 8
-	adiw yl, 48		; Point Y to Left button value in GC buffer
+	adiw yl, GC_OFF_L_VAL		; Point Y to Left button value in GC buffer
 lp_L:
 	st y+, r15
 	dec r17
 	brne lp_L
 
-	; Now do the 'R' button
+	;;;;;;;;;;;;;;; Now do the 'R' button. 
+	;Re-init Y with the buffer address.
 	rcall loadTxBufY
 
-	ldd r16, y+10	; R btn
+	ldd r16, y+GC_OFF_R		; R btn
 	clr r15	; Set L to 0x00
 	tst r16
 	breq do_R
 	com r15	; Set L to 0xff
 do_R:
 	ldi r17, 8
-	adiw yl, 56		; Point Y to Right button value in GC buffer
+	adiw yl, GC_OFF_R_VAL		; Point Y to Right button value in GC buffer
 lp_R:
 	st y+, r15
 	dec r17
@@ -567,11 +645,15 @@ lp_R:
 	ldi xh, hi8(n64_workbuf)
 	rcall loadTxBufY
 
-	adiw xl, 12		; up
-	ld r16, x+
+	adiw xl, 12		; N64 C pad UP
+	ld r16, x
 	tst r16
 	brne C_up
-	ld r16, x+		; down
+
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+	adiw xl, 13
+	ld r16, x		; down
 	tst r16
 	brne C_dn
 	ldi r16, 0x7f	; middle position
@@ -591,15 +673,22 @@ lp_Cupdn:
 	lsr r17
 	brne lp_Cupdn
 
-	; Now do the C-Stick X axis using the N64 C pad
+	; Now do the C-Stick X axis using the N64 L/R C pad
+	sbrc r7,1 ; sin & p
+	rjmp after_c_left_right
+
 	ldi xl, lo8(n64_workbuf)
 	ldi xh, hi8(n64_workbuf)
 	rcall loadTxBufY
 	adiw xl, 14		; left
-	ld r16, x+
+	ld r16, x
 	tst r16
 	brne C_lf
-	ld r16, x+		; right
+
+	ldi xl, lo8(n64_workbuf)
+	ldi xh, hi8(n64_workbuf)
+	adiw xl, 15		; right
+	ld r16, x		
 	tst r16
 	brne C_rt
 	ldi r16, 0x7f	; middle position
@@ -618,71 +707,147 @@ lp_Clfrt:
 	st y+, r15		; store r17 or 0
 	lsr r17
 	brne lp_Clfrt
+after_c_left_right:
 
 	; Now copy the first joystick byte
 	ldi xl, lo8(n64_workbuf)
 	ldi xh, hi8(n64_workbuf)
-	adiw xl, 16
-	ldi r17, 0x80
-	clr r18
-rd_axis1:
-	ld r16, x+
-	tst r16
-	breq rdwas0 ; zero? no need to set the bit
-	or r18, r17
-rdwas0:
-	lsr r17
-	brne rd_axis1
-	; now the first value is in r18. Fix it up and write
-	; it in the destination buffer
-	ldi r17, 0x7f
-	add r18, r17
-	rcall loadTxBufY
-	adiw yl, 16
-	ldi r17, 0x80
-wr_axis1:
-	mov r15, r17
-	and r15, r18
-	st y+, r15
-	lsr r17
-	brne wr_axis1
+	adiw xl, N64_OFF_JOY_X
+	rcall packByte ; build r18 from 8 bytes at X
 
+	sbrs r7, 2
+	rcall scaleN64Value
+
+	; now the first value is in r18. Convert
+	; it to gamecube unsigned format
+	ldi r17, 0x80
+	eor r18, r17
+
+	; write result to output buffer
+	rcall loadTxBufY
+	adiw yl, GC_OFF_JOY_X
+	rcall unPackByte
+
+	
 	; Now copy the second joystick byte
 	ldi xl, lo8(n64_workbuf)
 	ldi xh, hi8(n64_workbuf)
-	adiw xl, 24
+	adiw xl, N64_OFF_JOY_Y
+	rcall packByte ; build r18 from 8 bytes at X
+
+	sbrs r7, 2
+	rcall scaleN64Value
+
+	; now the first value is in r18. Convert it
+	; to gamecube unsigned format
 	ldi r17, 0x80
+	eor r18, r17
+
+	; write result to output buffer
+	rcall loadTxBufY
+	adiw yl, GC_OFF_JOY_Y
+	rcall unPackByte
+
+	com r6 ; swap current buffer
+	ret
+
+	/* Subroutine to construct a 8 bit value from 8 1bytes locations. 
+	 *
+	 * Arguments:
+	 *   X register: Most significant bit (byte) 
+     *
+     * Uses:
+	 *  r17, r16, r18 (result), changes X pointer
+	 */
+packByte:
 	clr r18
-rd_axis2:
+	ldi r17, 0x80
+packByteLp:
 	ld r16, x+
 	tst r16
-	breq rdwas02 ; zero? no need to set the bit
+	breq packByteWas0
 	or r18, r17
-rdwas02:
+packByteWas0:
 	lsr r17
-	brne rd_axis2
-	; now the first value is in r18. Fix it up and write
-	; it in the destination buffer
-	ldi r17, 0x7f
-	add r18, r17
-	rcall loadTxBufY
-	adiw yl, 24
+	brne packByteLp
+	ret
+
+	/* Subroutine to expand a byte in a register to one byte per bit 
+	 *
+	 * Arguments:
+	 *     Y register: Destination. Most significant bit first.
+	 *     r18: Input byte
+	 * 
+	 * Uses: r17, r15, changes Y pointer
+ 	 */
+unPackByte:
 	ldi r17, 0x80
-wr_axis2:
+unPackByteLp:
+	; mask current bit and write result to output address
 	mov r15, r17
 	and r15, r18
 	st y+, r15
 	lsr r17
-	brne wr_axis2
-
-
-
-
-
-
-
-	com r6 ; swap current buffer
+	brne unPackByteLp
 	ret
+
+	/*************************************************
+	* Subroutine which scales the value in r18
+	* to correct the reduced range of N64 controllers.
+	*
+	* Uses r16, r17, changes r18 (in/out register)
+	*
+	**************************************************/
+	; test. Multiply by 1.5 or 1.375 with saturation
+scaleN64Value:
+	sbrs r7, 3		; if bit set, use 1.5
+	rjmp one_375
+
+	; 1.5 version
+	mov r16, r18
+	asr r16
+	add r16, r18
+	rjmp saturate
+
+one_375:
+	; 1.375 version
+	mov r16, r18
+	asr r16 
+	asr r16	
+	; r16 now 1/4 of r18
+	mov r17, r16
+	asr r17
+	; r17 now 1/8 of r18
+
+	; Add everything up
+	add r16, r18
+	add r16, r17
+
+saturate:
+	; check if sign changed
+	tst r16
+	brmi minus
+	tst r18
+	brmi satpos
+	rjmp nosat1
+minus:
+	tst r18
+	brpl satneg
+	rjmp nosat1
+satneg:
+	ldi r16, 0x7f
+	mov r18, r16
+	rjmp sat_done
+satpos:
+	ldi r16, 0x80
+	mov r18, r16
+	rjmp sat_done
+nosat1:
+	mov r18, r16
+sat_done:
+
+
+
 
 	/*************************************************************
 	 * Subroutine which busy-loops for 6 microseconds (at 16 mhz)

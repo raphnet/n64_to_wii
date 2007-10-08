@@ -95,6 +95,9 @@ lp_send1_3us:
 
 	/********************************************************/
 readResponse:
+	; set error flag true (and clear it on success)
+	clr r21
+	com r21
 
 	ldi	yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
@@ -158,6 +161,7 @@ waitHigh:
 gotCommand:
 	; return with 0 in r15 on success
 	clr r15
+	clr r21 ; error flag. Same as r15 but used elsewhere.
 	ret
 
 align_delay:
@@ -171,6 +175,11 @@ timeout:
 	; return with 1 in r15 if error
 	clr r15
 	inc r15
+	
+	; error flag.
+	clr r21
+	com r21
+	
 	ret
 
 
