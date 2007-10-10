@@ -465,7 +465,7 @@ main:
 
 	rcall clr_precooked_buffers
 	rcall build_id_packet
-	rcall build_origins_packet
+	rcall build_origins_packet	; must be called after clr_precooked_buffers
 	rcall initReplyBuf
 
 	;inc r7 ; test
@@ -1045,6 +1045,29 @@ lp34128:
 	st z+, r20
 	dec r19
 	brne lp34128
+
+	; extra bits for 80 bit reply to alternate poll command
+	ldi zl, lo8(gc_tx_buf0_extra)
+	ldi zh, hi8(gc_tx_buf0_extra)
+	ldi yl, lo8(gc_tx_buf1_extra)
+	ldi yh, hi8(gc_tx_buf1_extra)
+	ldi r19, 16 ; start by zero'ing all 16 bits
+lp6343:
+	st z+, r20
+	st y+, r20
+	dec r19
+	brne lp6343
+
+	ldi zl, lo8(gc_tx_buf0_extra)
+	ldi zh, hi8(gc_tx_buf0_extra)
+	ldi yl, lo8(gc_tx_buf1_extra)
+	ldi yh, hi8(gc_tx_buf1_extra)
+
+	ldi r16, 0xff ; now set 8th and 16th bits
+	std z+7, r16
+	std z+15, r16
+	std y+7, r16
+	std y+15, r16
 
 	ret
 
