@@ -29,7 +29,7 @@ flash: $(HEXFILE)
 	$(UISP) --erase --upload --verify if=$(HEXFILE)
 
 fuse_usb:
-	sudo avrdude -p m8 -P usb -c avrispmkII -Uhfuse:w:0xc9 -Ulfuse:w:0x9f
+	sudo avrdude -p m8 -P usb -c avrispmkII -Uhfuse:w:0xc9:m -Ulfuse:w:0x9f:m
 
 flash_usb: $(HEXFILE)
 	sudo avrdude -p m8 -P usb -c avrispmkII -Uflash:w:$(HEXFILE) -B 1.0
