@@ -35,5 +35,5 @@ flash_usb: $(HEXFILE)
 	sudo avrdude -p m8 -P usb -c avrispmkII -Uflash:w:$(HEXFILE) -B 1.0
 	
 
-%.o: %.S
+%.o: %.S mapping_default.S alt_ssbm.S alt_ssbm2.S
 	$(CC) $(CFLAGS) -c $<
