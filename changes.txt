@@ -11,7 +11,7 @@ button is held when connecting the controller. This is reported to be
 useful for the Sin and Punishment virtual console game.
 
 - The joystick sensitivity may now be increased or decreased by holding
-the Didital right or left when connecting the controller.
+the Digital right or left when connecting the controller.
 
 ---=== v1.2 ===---
 - Fix an occasional reliability problem with some controllers.
