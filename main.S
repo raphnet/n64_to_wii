@@ -61,6 +61,10 @@
 #define R7_BIT_SIN			1
 #define R7_BIT_NOSCALE		2
 #define R7_BIT_SCALE_1_5	3
+#define R7_BIT_ALT_1		4
+#define R7_BIT_ALT_2		5
+#define R7_BIT_ALT_3		6
+#define R7_BIT_ALT_4		7
 
 .lcomm gc_rx_buf, 25
 .lcomm gc_tx_buf0, 64	; reply is 64 bit + 1 stop bit
@@ -527,6 +531,36 @@ no_disable_scaling:
 no_1dot5_scaling:
 
 
+	;;;; Take the C buttons as bits
+	ldd r16, y+N64_OFF_C_UP
+	tst r16
+	breq no_c_up
+	ldi r16, (1<<R7_BIT_ALT_1)	; bit3: Scale N64 values by 1.5 if set.
+	or r7, r16
+no_c_up:
+	ldd r16, y+N64_OFF_C_DOWN
+	tst r16
+	breq no_c_down
+	ldi r16, (1<<R7_BIT_ALT_2)	; bit3: Scale N64 values by 1.5 if set.
+	or r7, r16
+no_c_down:
+	ldd r16, y+N64_OFF_C_LEFT
+	tst r16
+	breq no_c_left
+	ldi r16, (1<<R7_BIT_ALT_3)	; bit3: Scale N64 values by 1.5 if set.
+	or r7, r16
+no_c_left:
+	ldd r16, y+N64_OFF_C_RIGHT
+	tst r16
+	breq no_c_right
+	ldi r16, (1<<R7_BIT_ALT_4)	; bit3: Scale N64 values by 1.5 if set.
+	or r7, r16
+no_c_right:
+
+
+
+
+
 	sei
 mainloop:
 	tst r3				; set inside int handler
@@ -607,14 +641,46 @@ translate:
 	; X will be at the beginning of the N64 buffer and will increment
 	; one byte at the time. Y will always point to the gamecube transmission
 	; buffer and the std instruction will be used.
+	mov r17, r7
+	andi r17, 0xf0
 
-	; alternate mapping for ssbm
-;	rcall translate_ssbm	
-;	rcall translate_default
+test_map_1:
+	ldi r16, 0x10
+	eor r16, r17
+	tst r16
+	brne test_map2
+	rcall translate_ssbm	
+	rjmp translate_common
+
+test_map2:
+	ldi r16, 0x20
+	eor r16, r17
+	tst r16
+	brne test_map4
 	rcall translate_ssbm2
+	rjmp translate_common
+	
+test_map4:
+	ldi r16, 0x40
+	eor r16, r17
+	tst r16
+	brne test_map8
+	rcall translate_ssbb
+	rjmp translate_common
+	
+test_map8:
+	ldi r16, 0x80
+	eor r16, r17
+	tst r16
+	brne use_default_mapping
+	rcall translate_ssbb2
+	rjmp translate_common
+
+use_default_mapping:
+	rcall translate_default
 
 	;;;;; Perform common mapping taksk
-
+translate_common:
 
 	;;;;;;;;;;;;;; Simulate analogic L/R buttons according to the corresponding buttons;
 	;;;;;; Start with the 'L' button:
@@ -693,6 +759,8 @@ lp_R:
 #include "mapping_default.S"
 #include "alt_ssbm.S"
 #include "alt_ssbm2.S"
+#include "alt_ssbb.S"
+#include "alt_ssbb2.S"
 
 	/* Subroutine to construct a 8 bit value from 8 1bytes locations. 
 	 *
