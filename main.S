@@ -38,6 +38,7 @@
 ;				2: Disable N64 joystick value scaling		(R7_BIT_NOSCALE)
 ;				3: If set, scale by 1.5 instead of 1.375 (if scaling is not disabled)
 ;															(R7_BIT_SCALE_1_5)
+;		r2: If non-zero, rumble on
 ;
 ;	------ registers for non-interrupt context
 ;		r15: Argument or temporary
@@ -45,6 +46,7 @@
 ;		r17: Loop counter for reading from controller
 ;		r18: Temporary storage while reading from controller
 ;		r21: Error flag for N64 data reception
+;		r9: misc
 ;
 ;	------ Interrupt context registers (some are used before enabling interrupts though)
 ;		r1: SREG backup in interrupt. Faster than pushing it to stack.
@@ -71,7 +73,7 @@
 .lcomm gc_tx_buf0_extra, 16	; for 80bit responses
 .lcomm gc_tx_buf1, 64	;
 .lcomm gc_tx_buf1_extra, 16 ; for 80bit response
-.lcomm n64_workbuf, 34	; read/write buffer for N64 comm
+.lcomm n64_workbuf, 256	; read/write buffer for N64 comm
 .lcomm id_status, 24	; reply to 0000 0000 1 (0x00)
 .lcomm origins_buf, 80	; reply to 0100 0001 1 (0x41)
 
@@ -146,7 +148,7 @@ fell:
 	; Ok, so there is now a 0 on the wire. 
 	;  Worst case, we are at the 9th cycle.
 	;  Best case, we are at the 3rd cycle.
-	;  Lets assumbe we are at cycle 6.
+	;  Let's assume we are at cycle 6.
 
 	;  cycle: 1-16 16-32 32-48 48-64
 	;   high:  0     1     1     1
@@ -192,9 +194,18 @@ gotCommand:
 	; 64 bit replies: 0x400300, 0x400302  ...
 	; 80 bit replies: 0x420000, 0x420302
 
+	ldd r8, Z+23
+	clr r2
+	tst r8
+	breq rumbleBitDone
+	inc r2 ; r2 =1
+	rjmp rumbleBitDone
+rumbleBitDone:
+
 	; test only bit 6 (0x020000) since it is apparently when this 
 	; very bit is set that a controller replies with 80 bits 
 	ldd r8, Z+6
+	
 
 	rjmp sendLatestBuffer
 
@@ -558,62 +569,152 @@ no_c_left:
 no_c_right:
 
 
-
-
+	rcall initRumble
 
 	sei
+
+
+	;
+	; Mario Kart Wii (and probably many other games) polls the Gamecube
+	; controller twice in a row, at 1ms interval. If we start sending
+	; a command to the N64 controller immediately after the first poll completes,
+	; the transmission will be interrupted by the second poll. This confuses 
+	; the N64 controller, which resets (re-calibrates in a possibly non-centered position). This
+	; is not desirable.
+	;
+	; In order to prevent the problem mentionned above, the code below makes sure that the GC bus 
+	; has been idle for at least a certain time before polling the N64 controller. This may not
+	; work for games which would use a longer poll interval.
+	;
+	; Games tested: 
+	;
+	; Mario Kart Wii
+	; Zelda Ocarina of time (VC)
+	;
 mainloop:
 	tst r3				; set inside int handler
-	breq mainloop;
+	breq mainloop
 
-	rcall readN64
-	rjmp dly
+dly:	
+	clr r3
+	rcall delay_3ms
+
+	; Make sure this was a real idle 3ms
+	tst r3				; set inside int handler
+	brne dly
 	
-dly:
+	rcall readN64
 
-	; Note: SLOW_POLLING is not defined. The Wii polls two times at 1ms intervals,
-	; followed by an approx. delay of 16ms before the next two reads. Why? Debouncing maybe?
-	; In our case, this permits a more up-to-date button state on the second read because
-	; we will report freshly read N64 controller data on the second read. (that is, if SLOW_POLLING
-	; is not defined.... Too bad for non-standard controllers if it cause a problem.
-#ifdef SLOW_POLLING 
-	rcall delay_16ms	; dont read the controller again too soon?
-						; just in case some non-standard compatible
-						; controller does not like this.
-#endif
 	clr r3
 	rjmp mainloop
 
+initRumble:
+	ldi r16, 0x80
+	mov r2, r16
+	rcall rumbleSend
+
+	ret
 
 	/*************************************************************
 	 READ N64
 	 */
 readN64:
-	
+
+	rcall rumbleSend
+
+	; Fails at 10, works at 11. 23 ought to be fine.
+	ldi r17, 23
+afterRumbleDelay:
+	rcall delay_6us
+	dec r17
+	brne afterRumbleDelay
+
 	/* Get button/axes report command is 0x0000 0001 */
+	ldi r16, 0x01
+	rcall send9bits	
+
+	; n64_sendData returns non-zero in r15 if an error occurs.
+	tst r15
+	breq translate
+
+	ret
+
+send9bits:
 	ldi yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
-	ldi r16, 0x01
-	st y+, r0
-	st y+, r0
-	st y+, r0
-	st y+, r0
-	
-	st y+, r0
-	st y+, r0
-	st y+, r0
-	st y+, r16
+	rcall bytecmd2workbuf	
 	st y+, r16 ; stop bit
-	
 	ldi yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
 
 	ldi r16, 9 ; byte + stop bit
 	mov r15, r16
 	rcall n64_sendData
-	; n64_sendData returns non-zero in r15 if an error occurs.
-	tst r15
-	breq translate
+	ret
+
+	;
+rumbleSend:
+	ldi yl, lo8(n64_workbuf)
+	ldi yh, hi8(n64_workbuf)
+
+	ldi r16, 0x03
+	rcall bytecmd2workbuf
+
+	ldi r16, 0x80
+	eor r16, r2
+	breq initseq
+
+	ldi r16, 0xc0
+	rcall bytecmd2workbuf
+
+	ldi r16, 0x1b
+	rcall bytecmd2workbuf
+
+	rjmp rumbleArray
+initseq:
+
+	ldi r16, 0x80
+	rcall bytecmd2workbuf
+	ldi r16, 0x01
+	rcall bytecmd2workbuf
+
+
+;#define ARR_SIZE 1
+#define ARR_SIZE 29
+#define PSIZE (8+8+8+(8*ARR_SIZE)+1)
+rumbleArray:
+	; send the 32! 01's or 00's
+	ldi r16, 14
+	mov r9, r16
+rmblp:
+	mov r16, r2
+	rcall bytecmd2workbuf
+	dec r9
+	brne rmblp
+	
+	st y+, r16 ; stop bit
+
+	ldi yl, lo8(n64_workbuf)
+	ldi yh, hi8(n64_workbuf)
+
+	ldi r16, 137 ; byte + stop bit
+	mov r15, r16
+	rcall n64_sendData
+	
+	ret
+
+	; Load Y with destination before calling
+bytecmd2workbuf:
+	mov r15, r16 ; value to send
+	ldi r16, 0x80
+rn64l1:
+	mov r17, r16 ; copy current mask
+	and r17, r15 ; isolate current bit
+	st y+, r17
+	lsr r16
+	brne rn64l1
+
+	;st y+, r16 ; stop bit
 
 	ret
 
@@ -871,6 +972,28 @@ delay_6us_loop:
 	brne delay_6us_loop	; 2 when taken
 	ret
 
+	;	Not really tuned. Probably around 1.72ms
+delay_3ms:
+	push r17
+	ldi r17, 10
+delay_3ms_outer_lp:
+	ldi r16, 255
+delay_3ms_lp:
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	dec r16
+	brne delay_3ms_lp
+
+	dec r17
+	brne delay_3ms_outer_lp
+
+	pop r17
+	ret
 	
 	/*************************************************************
 	 * Subroutine which busy-loops for 16 milliseconds (at 16 mhz)
@@ -976,10 +1099,6 @@ build_origins_packet:
 	st z+, r19
 	st z, r19
 	;;;; 16 bit of 0's? 
-#if 0
-	adiw zl, 17
-	st z, r19 	; Stop bit
-#endif
 	ret
 
 	/*********************************************

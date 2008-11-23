@@ -1,3 +1,6 @@
+---=== v1.5 ===---
+- Implemented the Rumble feature. 
+
 ---=== v1.4 ===---
 - Added 4 new button mappings, accessible by holding a C button for each
 mapping. These are reported to be useful for Super Smash bros Melee and Brawl.
