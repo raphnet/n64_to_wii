@@ -79,7 +79,11 @@
 
 .text
 .global main
+#if defined(__AVR_ATmega8__) /* TODO: Test if using __vector_1 directly works for atmega8 */
 .global SIG_INTERRUPT0
+#else
+.global __vector_1
+#endif
 ;.global gc_rx_buf
 .global n64_workbuf
 .global loadTxBufY
@@ -96,6 +100,7 @@
 #define IO_PINB	_SFR_IO_ADDR(PINB)
 #define IO_MCUCR _SFR_IO_ADDR(MCUCR)
 #define IO_GICR	_SFR_IO_ADDR(GICR)
+#define IO_EIMSK	_SFR_IO_ADDR(EIMSK)
 
 #define CLK_H_LATCH_H	0x30
 #define CLK_H_LATCH_L	0x20
@@ -115,12 +120,15 @@
 #define zl	r30
 #define zh	r31
 
+#if defined(__AVR_ATmega8__) /* TODO: Test if using __vector_1 directly works for atmega8*/
 SIG_INTERRUPT0:
+#else
+__vector_1:
+#endif
 	in r1, IO_SREG
 	ldi	zl, lo8(gc_rx_buf)
 	ldi zh, hi8(gc_rx_buf)
 	ldi r23, 25				; We will receive a 24bit command
-
 	rjmp fell
 
 
@@ -478,11 +486,20 @@ main:
 	ldi r16, 0x01	/* 0000 0001 */
 	out IO_DDRD, r16
 
+#if defined(__AVR_ATmega8__)
 	/* Configure external interrupt INT0 (falling edge) */
 	ldi r16, 0x02	/* 0000 0010 */ 
 	out IO_MCUCR, r16
 	ldi r16, 0x40	/* INT0 set */
 	out IO_GICR, r16
+#elif defined(__AVR_ATmega88P__)
+	ldi r16, 0x02	/* Setupt falling edge */
+	sts EICRA, r16 
+	ldi r16, 0x01	/* INT0 set */
+	out IO_EIMSK, r16
+#else
+#error MCU not supported
+#endif
 
 
 	rcall clr_precooked_buffers
