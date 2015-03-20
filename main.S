@@ -1,7 +1,7 @@
 ;
 ;	n64_to_wii: AVR Microcontroller firmware for converting N64 controller
 ;	          protocol to Nintendo Wii/Gamecube controller protocol.
-;    Copyright (C) 2007-2008  Raphael Assenat <raph@raphnet.net>
+;    Copyright (C) 2007-2015  Raphael Assenat <raph@raphnet.net>
 ;
 ;    This program is free software; you can redistribute it and/or modify
 ;    it under the terms of the GNU General Public License as published by
@@ -17,11 +17,11 @@
 ;    with this program; if not, write to the Free Software Foundation, Inc.,
 ;    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 ;
-;	------------------------------------------------------------------------   
+;	------------------------------------------------------------------------
 ;
 ;	Register usages:
 ;
-;	------ read only registers 
+;	------ read only registers
 ;		r0: Constant 0
 ;
 ;	------ registers shared between interrupt and non-interrupt context
@@ -32,7 +32,7 @@
 ;		r7: Mapping tweaks register bitfield.
 ;				0: If set, unswap L and Z buttons     		(R7_BIT_UNSWAP_L_Z)
 ;               1: Sin and punishment mapping {				(R7_BIT_SIN)
-;						N64 C-Stick Left -> Gamecube Y	
+;						N64 C-Stick Left -> Gamecube Y
 ;						N64 C-Stick Right -> Gamecube X
 ;				}
 ;				2: Disable N64 joystick value scaling		(R7_BIT_NOSCALE)
@@ -80,7 +80,7 @@
 .text
 .global main
 #if defined(__AVR_ATmega8__) /* TODO: Test if using __vector_1 directly works for atmega8 */
-.global SIG_INTERRUPT0
+.global INT0_vect
 #else
 .global __vector_1
 #endif
@@ -108,9 +108,9 @@
 
 #define DEBUG_PORTD_BIT 0x00	/* In PORTD */
 #define GC_DATA_BIT		0x02	/* in PORTD */
-#define GC_DATA_MASK	0x04	
+#define GC_DATA_MASK	0x04
 #define DATA_FALL_TIMEOUT	0x15
-#define DATA_RAISE_TIMEOUT	0x15 
+#define DATA_RAISE_TIMEOUT	0x15
 
 ; Useful
 #define xl	r26
@@ -121,7 +121,7 @@
 #define zh	r31
 
 #if defined(__AVR_ATmega8__) /* TODO: Test if using __vector_1 directly works for atmega8*/
-SIG_INTERRUPT0:
+INT0_vect:
 #else
 __vector_1:
 #endif
@@ -134,7 +134,7 @@ __vector_1:
 
 readNextBit:
 	ldi r19, DATA_FALL_TIMEOUT	; setup a timeout
-waitFall:				
+waitFall:
 	dec r19						; 1
 	breq timeout				; 1
 	in r20, IO_PIND				; 1 : read the input port
@@ -153,7 +153,7 @@ waitFall:
 	nop
 fell:
 
-	; Ok, so there is now a 0 on the wire. 
+	; Ok, so there is now a 0 on the wire.
 	;  Worst case, we are at the 9th cycle.
 	;  Best case, we are at the 3rd cycle.
 	;  Let's assume we are at cycle 6.
@@ -162,7 +162,7 @@ fell:
 	;   high:  0     1     1     1
 	;   low:  0     0     0     1
 
-	;  I check the pin on the 32th cycle which is 
+	;  I check the pin on the 32th cycle which is
 	;  the safest place. Assuming we are on the 6th cycle,
 	;  we need to waste 26 cycles. This is done by
 	;  adjusting the align_delay subroutine.
@@ -194,9 +194,9 @@ gotCommand:
 	ldi	zl, lo8(gc_rx_buf)
 	ldi zh, hi8(gc_rx_buf)
 
-	; note: Last byte not checked... it contains a bit for rumble motor.. I'm 
+	; note: Last byte not checked... it contains a bit for rumble motor.. I'm
 	; not sure about the others. I'd rather reply anyway than not doing it and
-	; having the console beleiving the controller is gone or failing... 
+	; having the console beleiving the controller is gone or failing...
 
 	; Here are some possible 24 bit commands and the reply length assotiated with them.
 	; 64 bit replies: 0x400300, 0x400302  ...
@@ -210,29 +210,29 @@ gotCommand:
 	rjmp rumbleBitDone
 rumbleBitDone:
 
-	; test only bit 6 (0x020000) since it is apparently when this 
-	; very bit is set that a controller replies with 80 bits 
+	; test only bit 6 (0x020000) since it is apparently when this
+	; very bit is set that a controller replies with 80 bits
 	ldd r8, Z+6
-	
+
 
 	rjmp sendLatestBuffer
 
 timeout:
 	;  If we have received only 9 bits, the command is possibly getID+status. We
-	;   _must_ respond to this if we want the console to detect us. 
+	;   _must_ respond to this if we want the console to detect us.
 	;
 	; r23 is a count-down from 25 during the receive phase so it should
-	; contain a value of 16.. 
+	; contain a value of 16..
 	ldi r19, 16
-	sub r19, r23 
+	sub r19, r23
 	brne interrupt_done
 
 	; point z to the first bit (one byte per bit) of the
-	; message we just received. 
+	; message we just received.
 	ldi zl, lo8(gc_rx_buf)
 	ldi zh, hi8(gc_rx_buf)
 
-	; Commands: 0x00 = Get ID + Status, 0x41 = Get origins? 
+	; Commands: 0x00 = Get ID + Status, 0x41 = Get origins?
 ;
 	; Check that bits 7,5-0 are low. Then, if bit 6 is high,
 	; command is 0x41. Else, it is 0x00.
@@ -256,7 +256,7 @@ timeout:
 	ld r19, z+	;	bit 1
 	tst r19
 	brne unknown_cmd
-	
+
 	ld r19, z+	;	bit 0
 	tst r19
 	clc
@@ -277,7 +277,7 @@ checkBit6:
 	rjmp sendOriginsPacket
 
 not_41: ; we jumped here beacuse bit 6 is 0. Bit 0 must be low too.
-	brcs unknown_cmd	; 0x01 is not a command we know about. 
+	brcs unknown_cmd	; 0x01 is not a command we know about.
 	rjmp sendIdPacket
 
 unknown_cmd:
@@ -327,10 +327,10 @@ sendLatestBuffer:
 	rjmp bufferSelected
 useBuf1:
 	ldi	zl, lo8(gc_tx_buf1)
-	ldi zh, hi8(gc_tx_buf1)	
+	ldi zh, hi8(gc_tx_buf1)
 bufferSelected:
 
-	; When r8 != 0, send a 80 bit reply 
+	; When r8 != 0, send a 80 bit reply
 	tst r8
 	breq send64Bits
 	ldi r23, 80
@@ -354,9 +354,9 @@ dosendGCData:
 	*  3us 1us    1us 3us
 	*
 	* To send a 1, the pin direction is set to input.
-	* To send a 0, the pin direction is set to output. 
+	* To send a 0, the pin direction is set to output.
 	*	(of course, it's value is preset to zero)
-	* 
+	*
 	* At 16 mhz, a 1us period is 16 cycles. Thus a 3us period
 	* is 48 cycles.
 	*
@@ -377,8 +377,8 @@ lp_sendGCData_bits:
 	brne send1
 	nop
 send0:
-	sbi IO_DDRD, GC_DATA_BIT	; Pull bus to 0 
-	
+	sbi IO_DDRD, GC_DATA_BIT	; Pull bus to 0
+
 	ldi r20, 15
 lp_send0_3us:
 	dec r20
@@ -421,7 +421,7 @@ lp_send1_1us:
 	brne lp_send1_1us
 	nop
 	nop
-	
+
 	cbi IO_DDRD, GC_DATA_BIT	; Release bus to 1
 
 	ldi r20, 12
@@ -449,7 +449,7 @@ stbdly1:
 	brne stbdly1
 	nop
 	cbi IO_DDRD, GC_DATA_BIT	; Release
-	
+
 	ret
 
 	 /*
@@ -468,7 +468,7 @@ main:
 	ldi r16, 0x30	/* 0011 0000 */
 	out IO_DDRC, r16
 
-	/* Configure Jumpers as inputs with pull-ups. 
+	/* Configure Jumpers as inputs with pull-ups.
 	   Other PORTB pins are ISP pins. Configure those
 	   in the same way. */
 	ldi r16, 0xff
@@ -479,7 +479,7 @@ main:
 	/* All PORTD as input with pullups everywhere, except
 	   the Int0 (PD2) pin. The later must not have a pullup
 	   for we dont want to send 5volts to the host (Gamecube, Wii or
-	   compatible adapter. Bit0 is also reserved for debugging 
+	   compatible adapter. Bit0 is also reserved for debugging
 	   purposes. It is set as output, no pullup.  */
 	ldi r16, 0xfa 	/* 1111 1010 */
 	out IO_PORTD, r16
@@ -488,13 +488,13 @@ main:
 
 #if defined(__AVR_ATmega8__)
 	/* Configure external interrupt INT0 (falling edge) */
-	ldi r16, 0x02	/* 0000 0010 */ 
+	ldi r16, 0x02	/* 0000 0010 */
 	out IO_MCUCR, r16
 	ldi r16, 0x40	/* INT0 set */
 	out IO_GICR, r16
 #elif defined(__AVR_ATmega88P__)
 	ldi r16, 0x02	/* Setupt falling edge */
-	sts EICRA, r16 
+	sts EICRA, r16
 	ldi r16, 0x01	/* INT0 set */
 	out IO_EIMSK, r16
 #else
@@ -509,7 +509,7 @@ main:
 
 	;inc r7 ; test
 
-	clr r6 	; select buffer 0 initially 
+	clr r6 	; select buffer 0 initially
 	clr r3
 
 	; before enabling interrupt, read from the controller. Depending
@@ -595,15 +595,15 @@ no_c_right:
 	; Mario Kart Wii (and probably many other games) polls the Gamecube
 	; controller twice in a row, at 1ms interval. If we start sending
 	; a command to the N64 controller immediately after the first poll completes,
-	; the transmission will be interrupted by the second poll. This confuses 
+	; the transmission will be interrupted by the second poll. This confuses
 	; the N64 controller, which resets (re-calibrates in a possibly non-centered position). This
 	; is not desirable.
 	;
-	; In order to prevent the problem mentionned above, the code below makes sure that the GC bus 
+	; In order to prevent the problem mentionned above, the code below makes sure that the GC bus
 	; has been idle for at least a certain time before polling the N64 controller. This may not
 	; work for games which would use a longer poll interval.
 	;
-	; Games tested: 
+	; Games tested:
 	;
 	; Mario Kart Wii
 	; Zelda Ocarina of time (VC)
@@ -612,14 +612,14 @@ mainloop:
 	tst r3				; set inside int handler
 	breq mainloop
 
-dly:	
+dly:
 	clr r3
 	rcall delay_3ms
 
 	; Make sure this was a real idle 3ms
 	tst r3				; set inside int handler
 	brne dly
-	
+
 	rcall readN64
 
 	clr r3
@@ -648,7 +648,7 @@ afterRumbleDelay:
 
 	/* Get button/axes report command is 0x0000 0001 */
 	ldi r16, 0x01
-	rcall send9bits	
+	rcall send9bits
 
 	; n64_sendData returns non-zero in r15 if an error occurs.
 	tst r15
@@ -659,7 +659,7 @@ afterRumbleDelay:
 send9bits:
 	ldi yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
-	rcall bytecmd2workbuf	
+	rcall bytecmd2workbuf
 	st y+, r16 ; stop bit
 	ldi yl, lo8(n64_workbuf)
 	ldi yh, hi8(n64_workbuf)
@@ -708,7 +708,7 @@ rmblp:
 	rcall bytecmd2workbuf
 	dec r9
 	brne rmblp
-	
+
 	st y+, r16 ; stop bit
 
 	ldi yl, lo8(n64_workbuf)
@@ -717,7 +717,7 @@ rmblp:
 	ldi r16, 137 ; byte + stop bit
 	mov r15, r16
 	rcall n64_sendData
-	
+
 	ret
 
 	; Load Y with destination before calling
@@ -767,7 +767,7 @@ test_map_1:
 	eor r16, r17
 	tst r16
 	brne test_map2
-	rcall translate_ssbm	
+	rcall translate_ssbm
 	rjmp translate_common
 
 test_map2:
@@ -777,7 +777,7 @@ test_map2:
 	brne test_map4
 	rcall translate_ssbm2
 	rjmp translate_common
-	
+
 test_map4:
 	ldi r16, 0x40
 	eor r16, r17
@@ -785,7 +785,7 @@ test_map4:
 	brne test_map8
 	rcall translate_ssbb
 	rjmp translate_common
-	
+
 test_map8:
 	ldi r16, 0x80
 	eor r16, r17
@@ -816,7 +816,7 @@ lp_L:
 	dec r17
 	brne lp_L
 
-	;;;;;;;;;;;;;;; Now do the 'R' button. 
+	;;;;;;;;;;;;;;; Now do the 'R' button.
 	rcall loadTxBufY
 	ldd r16, y+GC_OFF_R		; R btn
 	clr r15	; Set L to 0x00
@@ -851,7 +851,6 @@ lp_R:
 	adiw yl, GC_OFF_JOY_X
 	rcall unPackByte
 
-	
 	; Now copy the second joystick byte
 	ldi xl, lo8(n64_workbuf)
 	ldi xh, hi8(n64_workbuf)
@@ -880,10 +879,10 @@ lp_R:
 #include "alt_ssbb.S"
 #include "alt_ssbb2.S"
 
-	/* Subroutine to construct a 8 bit value from 8 1bytes locations. 
+	/* Subroutine to construct a 8 bit value from 8 1bytes locations.
 	 *
 	 * Arguments:
-	 *   X register: Most significant bit (byte) 
+	 *   X register: Most significant bit (byte)
      *
      * Uses:
 	 *  r17, r16, r18 (result), changes X pointer
@@ -901,12 +900,12 @@ packByteWas0:
 	brne packByteLp
 	ret
 
-	/* Subroutine to expand a byte in a register to one byte per bit 
+	/* Subroutine to expand a byte in a register to one byte per bit
 	 *
 	 * Arguments:
 	 *     Y register: Destination. Most significant bit first.
 	 *     r18: Input byte
-	 * 
+	 *
 	 * Uses: r17, r15, changes Y pointer
  	 */
 unPackByte:
@@ -941,8 +940,8 @@ scaleN64Value:
 one_375:
 	; 1.375 version
 	mov r16, r18
-	asr r16 
-	asr r16	
+	asr r16
+	asr r16
 	; r16 now 1/4 of r18
 	mov r17, r16
 	asr r17
@@ -1011,12 +1010,12 @@ delay_3ms_lp:
 
 	pop r17
 	ret
-	
+
 	/*************************************************************
 	 * Subroutine which busy-loops for 16 milliseconds (at 16 mhz)
 	 * (it is in fact tweaked for a 59.94hz update rate
 	 *************************************************************/
-delay_16ms: 
+delay_16ms:
 	push r17
 	ldi r17, 103
 delay_16ms_outer_lp:
@@ -1042,14 +1041,14 @@ delay_16ms_lp:
 delay_16ms_done:
 	pop r17
 	ret
-	
+
 	/********************************************
 		Uses r19, Z
 	*/
 build_id_packet:
 	/* My controller replies with this:
 
-		  [   Device ID   ] [status] 
+		  [   Device ID   ] [status]
 		  00001001 00000000 00100000 1
 		      ^  ^                   ^
 			  |  |                   +--- Stop bit
@@ -1073,7 +1072,7 @@ build_id_packet:
 
 build_origins_packet:
 	; When Wii sends 0100 0001 1, my gc controller replies:
-	; 0000 0000 1000 0000 1000 0011 0111 1010 
+	; 0000 0000 1000 0000 1000 0011 0111 1010
 	; 1000 0001 0111 1110 0001 0110 0001 0011
 	; 0000 0000 0000 0000 1
 	;
@@ -1115,17 +1114,17 @@ build_origins_packet:
 	adiw zl, 3
 	st z+, r19
 	st z, r19
-	;;;; 16 bit of 0's? 
+	;;;; 16 bit of 0's?
 	ret
 
 	/*********************************************
 	*********************************************/
 clr_precooked_buffers:
 	clr r20
-	
+
 	ldi	zl, lo8(id_status)
 	ldi zh, hi8(id_status)
-	
+
 	ldi r19, 24
 lp3412:
 	st z+, r20
