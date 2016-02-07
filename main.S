@@ -1,7 +1,7 @@
 ;
 ;	n64_to_wii: AVR Microcontroller firmware for converting N64 controller
 ;	          protocol to Nintendo Wii/Gamecube controller protocol.
-;    Copyright (C) 2007-2015  Raphael Assenat <raph@raphnet.net>
+;    Copyright (C) 2007-2016  Raphael Assenat <raph@raphnet.net>
 ;
 ;    This program is free software; you can redistribute it and/or modify
 ;    it under the terms of the GNU General Public License as published by
@@ -28,7 +28,8 @@
 ;		r6: Select current GC reply buffer
 ;		r3: Set to non-zero after each interrupt, used to read from the slave
 ;		controller immediately after each interrupt.
-;		r4-r5: Nes/Snes controller latest read bytes (r4 filled first)
+;		r4: Bus non-idle counter
+;		r5: If non-zero, bus idle and rumble off. (For Gameboy player)
 ;		r7: Mapping tweaks register bitfield.
 ;				0: If set, unswap L and Z buttons     		(R7_BIT_UNSWAP_L_Z)
 ;               1: Sin and punishment mapping {				(R7_BIT_SIN)
@@ -111,6 +112,9 @@
 #define GC_DATA_MASK	0x04
 #define DATA_FALL_TIMEOUT	0x15
 #define DATA_RAISE_TIMEOUT	0x15
+
+;#define NO_IDLE_BEFORE_POLL
+;#define NORUMBLE
 
 ; Useful
 #define xl	r26
@@ -460,6 +464,9 @@ stbdly1:
 	 */
 main:
 	clr r0
+	clr r5 ; When non-zero, rumble and bus idle wait before poll will be disabled.
+	clr r4
+	inc r4 ; When R4 overflows to zero, r5 will be set to 1 (Gameboy player detection)
 
 	/* Configure Latch and Clock as outputs and
 	   enable pull-ups on inputs/unused pins,  */
@@ -492,7 +499,7 @@ main:
 	out IO_MCUCR, r16
 	ldi r16, 0x40	/* INT0 set */
 	out IO_GICR, r16
-#elif defined(__AVR_ATmega88P__)
+#elif defined(__AVR_ATmega88P__) || defined(__AVR_ATmega168__)
 	ldi r16, 0x02	/* Setupt falling edge */
 	sts EICRA, r16
 	ldi r16, 0x01	/* INT0 set */
@@ -612,13 +619,29 @@ mainloop:
 	tst r3				; set inside int handler
 	breq mainloop
 
+	tst r5
+	brne non_gbp_mode	; When r5 non-zero, skip waiting for idle
+
+#ifndef NO_IDLE_BEFORE_POLL
+	clr r4
 dly:
+	inc r4 ; Counts loops waiting for idle
+	breq enable_gbp_mode ; On overflow, disable rumble and idle waiting. 3ms * 255 = 765ms.
+
 	clr r3
 	rcall delay_3ms
 
 	; Make sure this was a real idle 3ms
 	tst r3				; set inside int handler
 	brne dly
+#endif
+
+	rjmp non_gbp_mode
+
+enable_gbp_mode:
+	clr r5
+	inc r5
+non_gbp_mode:
 
 	rcall readN64
 
@@ -637,6 +660,9 @@ initRumble:
 	 */
 readN64:
 
+	tst r5
+	brne no_rumble	; When r5 non-zero, skip waiting for idle
+#ifndef NORUMBLE
 	rcall rumbleSend
 
 	; Fails at 10, works at 11. 23 ought to be fine.
@@ -645,6 +671,9 @@ afterRumbleDelay:
 	rcall delay_6us
 	dec r17
 	brne afterRumbleDelay
+#endif
+
+no_rumble:
 
 	/* Get button/axes report command is 0x0000 0001 */
 	ldi r16, 0x01
