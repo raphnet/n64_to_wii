@@ -23,17 +23,13 @@ n64_to_wii.hex: n64_to_wii.elf
 	avr-size n64_to_wii.elf
 
 fuse:
-	$(UISP) --wr_fuse_h=0xc9 --wr_fuse_l=0x9f
+	avrdude -p m8 -P usb -c avrispmkII -Uhfuse:w:0xc9:m -Ulfuse:w:0x9f:m
 
 flash: $(HEXFILE)
-	$(UISP) --erase --upload --verify if=$(HEXFILE)
+	avrdude -p m8 -P usb -c avrispmkII -Uflash:w:$(HEXFILE) -B 1.0
 
-fuse_usb:
-	sudo avrdude -p m8 -P usb -c avrispmkII -Uhfuse:w:0xc9:m -Ulfuse:w:0x9f:m
-
-flash_usb: $(HEXFILE)
-	sudo avrdude -p m8 -P usb -c avrispmkII -Uflash:w:$(HEXFILE) -B 1.0
-	
+reset:
+	avrdude -p m8 -P usb -c avrispmkII -B 1.0
 
 %.o: %.S mapping_default.S alt_ssbm.S alt_ssbm2.S
 	$(CC) $(CFLAGS) -c $<
