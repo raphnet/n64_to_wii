@@ -1,6 +1,9 @@
----=== v1.6 ===--
+---=== v1.7 ===--
 - Compatiblity fix for Gameboy player: When a very high poll frequency is detected, disable rumble.
 - ATmega168 MCU support
+
+---=== v1.6 ===--
+- Atmega88 MCU support.
 
 ---=== v1.5 ===---
 - Implemented the Rumble feature.
