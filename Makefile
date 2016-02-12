@@ -33,7 +33,7 @@ fuse_usb:
 	$(AVRDUDE) -p m168 -P usb -c avrispmkII -Uefuse:w:0x01:m -Uhfuse:w:0xdc:m -Ulfuse:w:0xd7:m -B 20.0 -F
 
 flash_usb: $(HEXFILE)
-	$(AVRDUDE) -p -m168 -P usb -c avrispmkII -Uflash:w:$(HEXFILE) -B 1.0 -F
+	$(AVRDUDE) -p m168 -P usb -c avrispmkII -Uflash:w:$(HEXFILE) -B 1.0 -F
 
 %.o: %.S mapping_default.S alt_ssbm.S alt_ssbm2.S
 	$(CC) $(CFLAGS) -c $<
