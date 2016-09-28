@@ -1,3 +1,6 @@
+---=== v1.7.1 ===---
+- Fix Atmega168 build (Used wrong interrupt vector!)
+
 ---=== v1.7 ===--
 - Compatiblity fix for Gameboy player: When a very high poll frequency is detected, disable rumble.
 - ATmega168 MCU support

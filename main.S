@@ -80,11 +80,8 @@
 
 .text
 .global main
-#if defined(__AVR_ATmega8__) /* TODO: Test if using __vector_1 directly works for atmega8 */
 .global INT0_vect
-#else
-.global __vector_1
-#endif
+
 ;.global gc_rx_buf
 .global n64_workbuf
 .global loadTxBufY
